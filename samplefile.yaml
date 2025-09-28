@@ -10,10 +10,68 @@ Parameters:
   KinesisStreamName:
     Type: String
     Description: The name of the Kinesis Data Stream to which the producer Lambda writes.
+  CtaInputStreamName:
+    Type: String
+    Description: The name of the Kinesis Data Stream that the rule processor Lambda reads from.
+  CtaOutputStreamName:
+    Type: String
+    Description: The name of the Kinesis Data Stream that the rule processor Lambda writes to.
+  SfCaseInputStreamName:
+    Type: String
+    Description: The name of the Kinesis Data Stream that the case creator Lambda reads from.
+  ApiTokenSecretArn:
+    Type: String
+    Description: The ARN of the Secrets Manager secret containing the API token. 
 
 Metadata: {}
 
 Resources:
+  ObservabilityRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: 'bbkyc-observability-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'bbkyc-observability-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # CloudWatch Logs read/write
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                  - 'logs:DescribeLogGroups'
+                  - 'logs:DescribeLogStreams'
+                  - 'logs:GetLogEvents'
+                Resource: 'arn:aws:logs:*:*:*'
+
+              # CloudWatch Metrics read/write
+              - Effect: Allow
+                Action:
+                  - 'cloudwatch:PutMetricData'
+                  - 'cloudwatch:GetMetricData'
+                  - 'cloudwatch:GetMetricStatistics'
+                  - 'cloudwatch:ListMetrics'
+                Resource: '*'
+
+              # AWS X-Ray tracing
+              - Effect: Allow
+                Action:
+                  - 'xray:PutTraceSegments'
+                  - 'xray:PutTelemetryRecords'
+                  - 'xray:GetTraceSummaries'
+                  - 'xray:GetServiceGraph'
+                Resource: '*'
   # IAM Role for the bdp-event-producer Lambda function
   BdpEventProducerRole:
     Type: 'AWS::IAM::Role'
@@ -44,6 +102,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - 's3:GetObject'
+                  - 's3:ListBucket'
                 Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
               # Permission to write records to the Kinesis stream
               - Effect: Allow
@@ -51,8 +110,98 @@ Resources:
                   - 'kinesis:PutRecord'
                   - 'kinesis:PutRecords'
                 Resource: !Sub 'arn:aws:kinesis:${AWS::Region}:${AWS::AccountId}:stream/${KinesisStreamName}'
-
+  # IAM Role for the bbkyc-cta-rule-processor Lambda function
+  CtaRuleProcessorRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: 'bbkyc-cta-rule-processor-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'bbkyc-cta-rule-processor-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Basic Lambda execution permissions for logging
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: 'arn:aws:logs:*:*:*'
+              # Permission to consume records from the input Kinesis stream
+              - Effect: Allow
+                Action:
+                  - 'kinesis:GetRecords'
+                  - 'kinesis:GetShardIterator'
+                  - 'kinesis:DescribeStream'
+                  - 'kinesis:ListShards'
+                Resource: !Sub 'arn:aws:kinesis:${AWS::Region}:${AWS::AccountId}:stream/${CtaInputStreamName}'
+              # Permission to write records to the output Kinesis stream
+              - Effect: Allow
+                Action:
+                  - 'kinesis:PutRecord'
+                  - 'kinesis:PutRecords'
+                Resource: !Sub 'arn:aws:kinesis:${AWS::Region}:${AWS::AccountId}:stream/${CtaOutputStreamName}'
+  # IAM Role for the bbkyc-sf-case-creator Lambda function
+  SfCaseCreatorRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: 'bbkyc-sf-case-creator-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'bbkyc-sf-case-creator-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Basic Lambda execution permissions for logging
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: 'arn:aws:logs:*:*:*'
+              # Permission to consume records from the input Kinesis stream
+              - Effect: Allow
+                Action:
+                  - 'kinesis:GetRecords'
+                  - 'kinesis:GetShardIterator'
+                  - 'kinesis:DescribeStream'
+                  - 'kinesis:ListShards'
+                Resource: !Sub 'arn:aws:kinesis:${AWS::Region}:${AWS::AccountId}:stream/${SfCaseInputStreamName}'
+              # Permission to retrieve the API token from Secrets Manager
+              - Effect: Allow
+                Action:
+                  - 'secretsmanager:GetSecretValue'
+                Resource: !Ref ApiTokenSecretArn
 Outputs:
   BdpEventProducerRoleArn:
     Description: "ARN of the IAM role for the bdp-event-producer Lambda"
     Value: !GetAtt BdpEventProducerRole.Arn
+  BdpEventConsumerRoleArn:
+    Description: "ARN of the IAM role for the bdp-event-consumer Lambda"
+    Value: !GetAtt BdpEventConsumerRole.Arn
+  CtaRuleProcessorRoleArn:
+    Description: "ARN of the IAM role for the bbkyc-cta-rule-processor Lambda"
+    Value: !GetAtt CtaRuleProcessorRole.Arn
+  SfCaseCreatorRoleArn:
+    Description: "ARN of the IAM role for the bbkyc-sf-case-creator Lambda"
+    Value: !GetAtt SfCaseCreatorRole.Arn
+  ObservabilityRoleArn:
+    Description: "ARN of the IAM role for Lambda/Services with CloudWatch + X-Ray access"
+    Value: !GetAtt ObservabilityRole.Arn
