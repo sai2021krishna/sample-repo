@@ -7,9 +7,9 @@ Parameters:
   S3BucketName:
     Type: String
     Description: The name of the S3 bucket that triggers the event producer Lambda.
-  TtEventTopicName:
+  KinesisStreamName:
     Type: String
-    Description: The name of the TT Event Topic (SNS) to which the producer Lambda publishes.
+    Description: The name of the Kinesis Data Stream to which the producer Lambda writes.
 
 Metadata: {}
 
@@ -45,14 +45,14 @@ Resources:
                 Action:
                   - 's3:GetObject'
                 Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
-              # Permission to publish messages to the SNS topic
+              # Permission to write records to the Kinesis stream
               - Effect: Allow
                 Action:
-                  - 'sns:Publish'
-                Resource: !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${TtEventTopicName}'
+                  - 'kinesis:PutRecord'
+                  - 'kinesis:PutRecords'
+                Resource: !Sub 'arn:aws:kinesis:${AWS::Region}:${AWS::AccountId}:stream/${KinesisStreamName}'
 
 Outputs:
   BdpEventProducerRoleArn:
     Description: "ARN of the IAM role for the bdp-event-producer Lambda"
     Value: !GetAtt BdpEventProducerRole.Arn
-
